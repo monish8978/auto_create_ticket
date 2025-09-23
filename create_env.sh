@@ -20,3 +20,52 @@ source venv/bin/activate
 echo "Installing requirements..."
 pip install -r requirements.txt
 echo "Requirements installed."
+
+
+# -----------------------------
+# Systemd Service Setup
+# -----------------------------
+
+SERVICE_DIR="/etc/systemd/system"
+SERVICE_FILE="$SERVICE_DIR/auto_create_ticket.service"
+
+# 1️⃣ Ensure /etc/systemd/system directory exists
+if [ ! -d "$SERVICE_DIR" ]; then
+    echo "Creating systemd directory: $SERVICE_DIR"
+    sudo mkdir -p "$SERVICE_DIR"
+else
+    echo "Systemd directory already exists: $SERVICE_DIR"
+fi
+
+# 2️⃣ Check if service file already exists
+if [ -f "$SERVICE_FILE" ]; then
+    echo "Service file already exists at $SERVICE_FILE — skipping creation."
+else
+    echo "Creating systemd service file at $SERVICE_FILE..."
+    
+    sudo tee "$SERVICE_FILE" > /dev/null <<EOL
+[Unit]
+Description=Auto Create Ticket FastAPI Service
+After=network.target
+
+[Service]
+WorkingDirectory=/Czentrix/apps/auto_create_ticket
+ExecStart=$cdir/uvicorn app:app --host 0.0.0.0 --port 9003 --workers 4
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOL
+
+    # Set permissions
+    sudo chmod 644 "$SERVICE_FILE"
+
+    # Reload and start service
+    echo "Reloading systemd..."
+    sudo systemctl daemon-reload
+
+    echo "Enabling and starting auto_create_ticket service..."
+    sudo systemctl enable auto_create_ticket
+    sudo systemctl start auto_create_ticket
+fi
