@@ -69,3 +69,22 @@ EOL
     sudo systemctl enable auto_create_ticket
     sudo systemctl start auto_create_ticket
 fi
+
+
+# -----------------------------
+# Add Crontab Entry (Service Health Check)
+# -----------------------------
+
+CRON_JOB="*/2 * * * * /Czentrix/apps/auto_create_ticket/venv/bin/python /Czentrix/apps/auto_create_ticket/service_check.py"
+
+# Check if cron job already exists
+(crontab -l 2>/dev/null | grep -F "$CRON_JOB") >/dev/null
+
+if [ $? -eq 0 ]; then
+    echo "Crontab entry already exists — skipping."
+else
+    echo "Adding crontab entry..."
+    # Append the new cron job
+    (crontab -l 2>/dev/null; echo "$CRON_JOB") | crontab -
+    echo "Crontab entry added."
+fi
