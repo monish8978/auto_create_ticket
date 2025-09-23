@@ -58,3 +58,5 @@ uvicorn app:app --host 0.0.0.0 --port 9003
 
 Access the app at 👉 http://localhost:9003
 
+⚙️ Systemd Service Setup
+
