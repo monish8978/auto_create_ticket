@@ -1,4 +1,4 @@
-import os, traceback, requests
+import os, traceback, requests, re, json
 from fastapi import FastAPI, UploadFile, File, HTTPException, Request, Form
 from fastapi.responses import JSONResponse
 from prompt_template import custom_prompt
@@ -83,6 +83,24 @@ async def upload_pdf(
         raise HTTPException(status_code=500, detail=f"Failed to process input: {str(e)}")
 
 
+def extract_relevant_data(input_text):
+    # First define the pattern to match everything between "---"
+    pattern1 = r'---\s*(.*?)\s*---'
+    
+    # Try to find matches for the first pattern
+    matches = re.findall(pattern1, input_text, re.DOTALL)
+    
+    # If no matches found, then try for the second pattern (starting from "Main Issue:")
+    if not matches:
+        pattern2 = r'Main Issue:.*?---'
+        matches = re.findall(pattern2, input_text, re.DOTALL)
+    
+    # If a match is found, return the first one
+    if matches:
+        return matches[0].strip()  # Use strip to clean up any leading/trailing whitespace
+    else:
+        return None  # If no match is found, return None
+        
 # ==========================
 # API: Query Documents
 # ==========================
@@ -111,7 +129,11 @@ async def query_documents(request: Request):
         client = get_chroma_client()
         collection = get_or_create_collection(client, collection_name)
         results = await retrieve_documents(full_query, collection, top_k=3)
-        context = "\n\n".join(results)
+        context_1 = "\n\n".join(results)
+        context = extract_relevant_data(context_1)
+
+        if context == None:
+            context = context_1
 
         # 4️⃣ Prepare system prompt
         system_prompt = custom_prompt.format(context=context, question=query_ask)
@@ -127,27 +149,26 @@ async def query_documents(request: Request):
             role = "user" if isinstance(msg, HumanMessage) else "assistant"
             formatted_messages.append({"role": role, "content": msg.content})
 
-        # 6️⃣ Call BitNet completions API instead of HF inference API
+        headers = {"Content-Type": "application/json"}
         payload = {
             "model": BITNET_MODEL_NAME,
-            "prompt": system_prompt + f"\nUser: {query_ask}\nAssistant:",
-            "max_tokens": 200,
-            "temperature": 0.3,
-            "stop": ["User:", "Assistant:"]
+            "messages": [{"role": "user", "content": system_prompt}],
+            "stream": False,
+            "think": False
         }
 
-        # Send request
+        # Send request to Ollama API
         response_api = requests.post(
             BITNET_URL,
-            headers={"Content-Type": "application/json"},
-            json=payload
+            headers=headers,
+            data=json.dumps(payload)
         )
+
         response_api.raise_for_status()
         response_data = response_api.json()
 
         # Extract response text
-        response_text = response_data.get("content", "").strip()
-
+        response_text = response_data.get("message", {}).get("content", "").strip()
 
         # 7️⃣ Save conversation back to Redis
         chat_history.add_user_message(query_ask)
