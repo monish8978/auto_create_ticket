@@ -1,209 +1,83 @@
-import os, traceback, requests, re, json
-from fastapi import FastAPI, UploadFile, File, HTTPException, Request, Form
-from fastapi.responses import JSONResponse
-from prompt_template import custom_prompt
-from langchain.memory.chat_message_histories import RedisChatMessageHistory
-from langchain.schema import HumanMessage, AIMessage
-from fastapi.middleware.cors import CORSMiddleware
-from utils.pdf_utils import extract_file_text
-from utils.chroma_utils import (
-    split_text, get_chroma_client, get_or_create_collection, add_chunks_to_chroma
-)
-from utils.retriever import retrieve_documents
-from settings import PORT,REDIS_URL, BITNET_URL, BITNET_MODEL_NAME
-from utils.logger import log
-import warnings
-
-# Suppress unwanted warnings (not always recommended in production)
-warnings.filterwarnings('ignore')
-
-# Initialize FastAPI app
-app = FastAPI(title="PDF Vector Store API", version="1.0")
-
-# Enable CORS (Cross-Origin Resource Sharing) for API calls
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # ⚠️ In production, restrict to trusted domains
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
 # ==========================
-# API: Upload PDF / String
+# 🔧 Configuration Settings
 # ==========================
-@app.post("/upload-pdf")
-async def upload_pdf(
-    file: UploadFile = File(None), 
-    file_str: str = Form(None), 
-    collection_name: str = Form(...)
-):
-    """
-    Upload a file or raw text, extract content, split into chunks,
-    and store in ChromaDB for later retrieval.
-    """
-    try:
-        # 1️⃣ Decide source: File upload or raw string
-        if file:
-            file_path = f"temp_{file.filename}"
-            with open(file_path, "wb") as f:
-                f.write(await file.read())
+# This file contains all the environment and service configurations 
+# required for running the Auto Create Ticket application.
 
-            # Extract text
-            text = extract_file_text(file_path)
-            os.remove(file_path)
+# --------------------------
+# Hugging Face / Ollama APIs
+# --------------------------
 
-        elif file_str:
-            text = file_str
-        else:
-            log.error("No file or file_str provided in request.")
-            raise HTTPException(status_code=400, detail="No file or file_str provided")
+# ✅ OLLAMA_URL:
+# This is the endpoint for the Ollama server that provides text embeddings.
+# Embeddings convert text into numerical vectors for similarity search.
+# These vectors are later stored in ChromaDB for retrieval.
+OLLAMA_URL = "https://api-embeddings-ollama.c-zentrix.com/api/embeddings"
 
-        if not text.strip():
-            log.error("No text extracted from file or string.")
-            raise ValueError("No text content extracted or provided")
-
-        # 2️⃣ Split text into chunks
-        chunks = split_text(text)
-
-        # 3️⃣ Store chunks in ChromaDB
-        client = get_chroma_client()
-        collection = get_or_create_collection(client, collection_name)
-        await add_chunks_to_chroma(chunks, collection)
-
-        return JSONResponse({
-            "detail": f" Text processed successfully for collection '{collection_name}'",
-            "chunks_processed": len(chunks),
-            "total_tokens": sum(len(chunk.page_content) for chunk in chunks)
-        }, status_code=200)
-
-    except Exception as e:
-        log.error(f"Error in /upload-pdf: {e}")
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Failed to process input: {str(e)}")
+# ✅ OLLAMA_MODEL_NAME:
+# This is the specific embedding model to use on the Ollama server.
+# Make sure this model is deployed and available on the endpoint.
+OLLAMA_MODEL_NAME = "nomic-embed-text:v1.5"
 
 
-def extract_relevant_data(input_text):
-    # First define the pattern to match everything between "---"
-    pattern1 = r'---\s*(.*?)\s*---'
-    
-    # Try to find matches for the first pattern
-    matches = re.findall(pattern1, input_text, re.DOTALL)
-    
-    # If no matches found, then try for the second pattern (starting from "Main Issue:")
-    if not matches:
-        pattern2 = r'Main Issue:.*?---'
-        matches = re.findall(pattern2, input_text, re.DOTALL)
-    
-    # If a match is found, return the first one
-    if matches:
-        return matches[0].strip()  # Use strip to clean up any leading/trailing whitespace
-    else:
-        return None  # If no match is found, return None
-        
-# ==========================
-# API: Query Documents
-# ==========================
-@app.post("/query")
-async def query_documents(request: Request):
-    """
-    Query ChromaDB with user input and return AI-generated response
-    using Hugging Face inference API.
-    """
-    try:
-        body = await request.json()
-        subject = body.get("subject")
-        mailBody = body.get("mailBody")
-        session_id = body.get("session_id")
-        collection_name = body.get("collection_name")
+# --------------------------
+# BitNet Retriever API
+# --------------------------
 
-        # 1️⃣ Combine subject + mail body
-        query_ask = subject + "\n" + mailBody
+# ✅ BITNET_URL:
+# This API is used for **generating responses** based on retrieved content.
+# It's typically backed by a large language model (LLM) like Mistral.
+BITNET_URL = "https://api-embeddings-ollama.c-zentrix.com/api/chat"
 
-        # 2️⃣ Retrieve past conversation from Redis
-        chat_history = RedisChatMessageHistory(session_id=session_id, url=REDIS_URL)
-        past_dialogue = [msg.content for msg in chat_history.messages if isinstance(msg, HumanMessage)][-3:]
-        full_query = " ".join(past_dialogue + [query_ask])
-
-        # 3️⃣ ChromaDB retrieval
-        client = get_chroma_client()
-        collection = get_or_create_collection(client, collection_name)
-        results = await retrieve_documents(full_query, collection, top_k=3)
-        context_1 = "\n\n".join(results)
-        context = extract_relevant_data(context_1)
-
-        if context == None:
-            context = context_1
-
-        # 4️⃣ Prepare system prompt
-        system_prompt = custom_prompt.format(context=context, question=query_ask)
-
-        # Keep short history for better performance
-        history_messages = chat_history.messages[-5:]
-        history_messages.append(HumanMessage(content=query_ask))
-        history_messages.insert(0, AIMessage(content=system_prompt))
-
-        # 5️⃣ Format messages for HF Inference API
-        formatted_messages = []
-        for msg in history_messages:
-            role = "user" if isinstance(msg, HumanMessage) else "assistant"
-            formatted_messages.append({"role": role, "content": msg.content})
-
-        headers = {"Content-Type": "application/json"}
-        payload = {
-            "model": BITNET_MODEL_NAME,
-            "messages": [{"role": "user", "content": system_prompt}],
-            "stream": False,
-            "think": False
-        }
-
-        # Send request to Ollama API
-        response_api = requests.post(
-            BITNET_URL,
-            headers=headers,
-            data=json.dumps(payload)
-        )
-
-        response_api.raise_for_status()
-        response_data = response_api.json()
-
-        # Extract response text
-        response_text = response_data.get("message", {}).get("content", "").strip()
-
-        # 7️⃣ Save conversation back to Redis
-        chat_history.add_user_message(query_ask)
-        chat_history.add_ai_message(response_text)
-
-        # 8️⃣ Build Adaptive Card style response
-        response = {
-            "type": "adaptiveCard",
-            "body": [
-                {"type": "TextBlock", "text": response_text},
-                {"type": "TextBlock", "text": "Was I helpful?"},
-                {
-                    "type": "Button",
-                    "id": "serviceType",
-                    "style": "expanded",
-                    "choices": [
-                        {"id": "Yes", "title": "Yes", "value": "Yes"},
-                        {"id": "No", "title": "No", "value": "No"}
-                    ]
-                }
-            ],
-            "actions": []
-        }
-
-        return JSONResponse(response, status_code=200)
-
-    except Exception as e:
-        log.error(f"Error in /query: {e}")
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Failed to retrieve documents: {str(e)}")
+# ✅ BITNET_MODEL_NAME:
+# This is the specific model used for generating human-like responses.
+# It works with the /chat endpoint to answer user queries.
+BITNET_MODEL_NAME = "mistral:latest"
 
 
-# # ==========================
-# # Run the App
-# # ==========================
-# if __name__ == "__main__":
-#     import uvicorn
-#     uvicorn.run(app, host="0.0.0.0", port=PORT)
+# --------------------------
+# FastAPI Service Settings
+# --------------------------
+
+# ✅ PORT:
+# The port on which your FastAPI app will be served.
+# Default is 9003, but you can change it if the port is already in use.
+PORT = 9003
+
+
+# --------------------------
+# Logging Configuration
+# --------------------------
+
+# ✅ LOG_DIR:
+# This is the directory where log files will be stored.
+# Make sure this directory exists and is writable by the service.
+LOG_DIR = "/var/log/czentrix/"
+
+# ✅ LOG_FILENAME:
+# Name of the log file for your FastAPI app.
+# Log files help in debugging, monitoring, and auditing.
+LOG_FILENAME = "auto_create_ticket.log"
+
+
+# --------------------------
+# Redis Configuration
+# --------------------------
+
+# ✅ REDIS_URL:
+# Redis is used for:
+#   - Storing session-based chat history (via RedisChatMessageHistory)
+#   - Cache mechanisms (optional)
+# Format: redis://<host>:<port>
+REDIS_URL = "redis://127.0.0.1:6379"
+
+
+# --------------------------
+# Systemd Service Name
+# --------------------------
+
+# ✅ SERVICE_FILE:
+# This is the name of the systemd service file, used when managing the app with:
+#   - `systemctl status auto_create_ticket`
+#   - `systemctl start auto_create_ticket`
+SERVICE_FILE = "auto_create_ticket"
