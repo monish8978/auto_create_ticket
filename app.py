@@ -169,6 +169,7 @@ async def query_documents(request: Request):
 
         # Extract response text
         response_text = response_data.get("message", {}).get("content", "").strip()
+        log.info(f"{response_text}")
 
         # 7️⃣ Save conversation back to Redis
         chat_history.add_user_message(query_ask)
