@@ -175,7 +175,7 @@ async def query_documents(request: Request):
         response_text_tmp = response_data.get("message", {}).get("content", "").strip()
         response_text_cleaned = re.sub(r'[\x00-\x1F\x7F]', '', response_text_tmp)  # Remove control characters
         response_text = json.loads(response_text_cleaned)
-        #response_text = json.loads(response_text)
+        response_text['solution'] = response_text['solution'].replace('\n', '\\n')
         log.info(f"{response_text}")
 
         # 7️⃣ Save conversation back to Redis
@@ -215,3 +215,4 @@ async def query_documents(request: Request):
 # if __name__ == "__main__":
 #     import uvicorn
 #     uvicorn.run(app, host="0.0.0.0", port=PORT)
+
