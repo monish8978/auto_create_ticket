@@ -1,4 +1,3 @@
-(venv) root@tvtroot:/Czentrix/apps/auto_create_ticket# cat app.py
 import os, traceback, requests, re, json
 from fastapi import FastAPI, UploadFile, File, HTTPException, Request, Form
 from fastapi.responses import JSONResponse
@@ -243,4 +242,3 @@ async def query_documents(request: Request):
 # if __name__ == "__main__":
 #     import uvicorn
 #     uvicorn.run(app, host="0.0.0.0", port=PORT)
-
