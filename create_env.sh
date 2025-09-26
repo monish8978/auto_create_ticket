@@ -27,7 +27,7 @@ echo "Requirements installed."
 # -----------------------------
 
 SERVICE_DIR="/etc/systemd/system"
-SERVICE_FILE="$SERVICE_DIR/auto_create_ticket.service"
+SERVICE_FILE="$SERVICE_DIR/auto-create-ticket.service"
 
 # 1️⃣ Ensure /etc/systemd/system directory exists
 if [ ! -d "$SERVICE_DIR" ]; then
@@ -65,9 +65,9 @@ EOL
     echo "Reloading systemd..."
     sudo systemctl daemon-reload
 
-    echo "Enabling and starting auto_create_ticket service..."
-    sudo systemctl enable auto_create_ticket
-    sudo systemctl start auto_create_ticket
+    echo "Enabling and starting auto-create-ticket service..."
+    sudo systemctl enable auto-create-ticket
+    sudo systemctl start auto-create-ticket
 fi
 
 
