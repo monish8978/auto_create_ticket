@@ -1,3 +1,4 @@
+(venv) root@tvtroot:/Czentrix/apps/auto_create_ticket# cat app.py
 import os, traceback, requests, re, json
 from fastapi import FastAPI, UploadFile, File, HTTPException, Request, Form
 from fastapi.responses import JSONResponse
@@ -171,11 +172,38 @@ async def query_documents(request: Request):
         response_api.raise_for_status()
         response_data = response_api.json()
 
-        # Extract response text
         response_text_tmp = response_data.get("message", {}).get("content", "").strip()
         response_text_cleaned = re.sub(r'[\x00-\x1F\x7F]', '', response_text_tmp)  # Remove control characters
         response_text = json.loads(response_text_cleaned)
         response_text['solution'] = response_text['solution'].replace('\n', '\\n')
+
+        # Step 1: Get the raw solution text
+        response_text_tmp = response_text.get("solution", "").strip()
+
+        # Step 2: Remove control characters (non-printable characters like \x00-\x1F, \x7F)
+        response_text_cleaned = re.sub(r'[\x00-\x1F\x7F]', '', response_text_tmp)
+
+        # Step 3: Escape only the double quotes inside the solution field (escape quotes for JSON compatibility)
+        response_text_cleaned = response_text_cleaned.replace('"', '\\"')
+
+        # Step 4: Remove excessive backslashes by replacing \\ with just \
+        response_text_cleaned = response_text_cleaned.replace('\\\\', '\\')
+
+        # Step 5: Escape newlines (\n) with \\n for proper JSON formatting
+        response_text_cleaned = response_text_cleaned.replace('\n', '\\n')
+
+        # Step 6: Remove extra spaces (collapse multiple spaces into one)
+        response_text_cleaned = re.sub(r'\s+', ' ', response_text_cleaned).strip()
+
+        # Step 7: Dynamically construct the response_text dictionary
+        response_text = {
+            'solution': response_text_cleaned,
+            'Disposition': response_text.get('Disposition', ''),  # Dynamic value from input
+            'Sub Disposition': response_text.get('Sub Disposition', ''),  # Dynamic value from input
+            'Priority': response_text.get('Priority', '')  # Dynamic value from input
+        }
+
+        # Step 3: Escape double quotes inside the solution field
         log.info(f"{response_text}")
 
         # 7️⃣ Save conversation back to Redis
