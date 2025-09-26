@@ -78,6 +78,7 @@ REDIS_URL = "redis://127.0.0.1:6379"
 
 # ✅ SERVICE_FILE:
 # This is the name of the systemd service file, used when managing the app with:
-#   - `systemctl status auto_create_ticket`
-#   - `systemctl start auto_create_ticket`
-SERVICE_FILE = "auto_create_ticket"
+#   - `systemctl status auto-create-ticket`
+#   - `systemctl start auto-create-ticket`
+SERVICE_FILE = "auto-create-ticket"
+
