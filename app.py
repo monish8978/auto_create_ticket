@@ -34,8 +34,8 @@ app.add_middleware(
 # ==========================
 @app.post("/upload-pdf")
 async def upload_pdf(
-    file: UploadFile = File(None), 
-    file_str: str = Form(None), 
+    file: UploadFile = File(None),
+    file_str: str = Form(None),
     collection_name: str = Form(...)
 ):
     """
@@ -86,21 +86,21 @@ async def upload_pdf(
 def extract_relevant_data(input_text):
     # First define the pattern to match everything between "---"
     pattern1 = r'---\s*(.*?)\s*---'
-    
+
     # Try to find matches for the first pattern
     matches = re.findall(pattern1, input_text, re.DOTALL)
-    
+
     # If no matches found, then try for the second pattern (starting from "Main Issue:")
     if not matches:
         pattern2 = r'Main Issue:.*?---'
         matches = re.findall(pattern2, input_text, re.DOTALL)
-    
+
     # If a match is found, return the first one
     if matches:
         return matches[0].strip()  # Use strip to clean up any leading/trailing whitespace
     else:
         return None  # If no match is found, return None
-        
+
 # ==========================
 # API: Query Documents
 # ==========================
@@ -117,6 +117,10 @@ async def query_documents(request: Request):
         session_id = body.get("session_id")
         collection_name = body.get("collection_name")
 
+        # Ensure session_id is valid
+        if not session_id:
+            raise HTTPException(status_code=400, detail="Session ID is required")
+
         # 1️⃣ Combine subject + mail body
         query_ask = subject + "\n" + mailBody
 
@@ -129,11 +133,11 @@ async def query_documents(request: Request):
         client = get_chroma_client()
         collection = get_or_create_collection(client, collection_name)
         results = await retrieve_documents(full_query, collection, top_k=3)
-        context_1 = "\n\n".join(results)
-        context = extract_relevant_data(context_1)
+        context_tmp = "\n\n".join(results)
+        context = extract_relevant_data(context_tmp)
 
         if context == None:
-            context = context_1
+            context = context_tmp
 
         # 4️⃣ Prepare system prompt
         system_prompt = custom_prompt.format(context=context, question=query_ask)
@@ -168,12 +172,15 @@ async def query_documents(request: Request):
         response_data = response_api.json()
 
         # Extract response text
-        response_text = response_data.get("message", {}).get("content", "").strip()
+        response_text_tmp = response_data.get("message", {}).get("content", "").strip()
+        response_text_cleaned = re.sub(r'[\x00-\x1F\x7F]', '', response_text_tmp)  # Remove control characters
+        response_text = json.loads(response_text_cleaned)
+        #response_text = json.loads(response_text)
         log.info(f"{response_text}")
 
         # 7️⃣ Save conversation back to Redis
         chat_history.add_user_message(query_ask)
-        chat_history.add_ai_message(response_text)
+        chat_history.add_ai_message(response_text_tmp)
 
         # 8️⃣ Build Adaptive Card style response
         response = {
