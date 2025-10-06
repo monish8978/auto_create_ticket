@@ -43,7 +43,7 @@ This script will:
 
 📦 Install all dependencies from requirements.txt
 
-⚙️ Set up a systemd service at /etc/systemd/system/auto_create_ticket.service
+⚙️ Set up a systemd service at /etc/systemd/system/auto-create-ticket.service
 
 🔁 Enable and start the auto_create_ticket service
 
@@ -56,18 +56,18 @@ Once setup is complete, the API will automatically start running as a service.
 
 You can verify this by checking the status:
 
-sudo systemctl status auto_create_ticket
+sudo systemctl status auto-create-ticket
 
 It should show something like:
 
-● auto_create_ticket.service - Auto Create Ticket FastAPI Service
+● auto-create-ticket.service - Auto Create Ticket FastAPI Service
    Active: active (running)
 
 
 You can also manually start or stop the service anytime:
 
-sudo systemctl restart auto_create_ticket
-sudo systemctl stop auto_create_ticket
+sudo systemctl restart auto-create-ticket
+sudo systemctl stop auto-create-ticket
 
 
 🌐 Accessing the API
