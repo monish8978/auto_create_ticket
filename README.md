@@ -45,7 +45,7 @@ This script will:
 
 ⚙️ Set up a systemd service at /etc/systemd/system/auto-create-ticket.service
 
-🔁 Enable and start the auto_create_ticket service
+🔁 Enable and start the auto-create-ticket service
 
 ✅ Verify that the service is active
 
