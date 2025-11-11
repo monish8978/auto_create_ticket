@@ -33,6 +33,7 @@ fsspec==2025.9.0
 google-auth==2.40.3
 googleapis-common-protos==1.70.0
 greenlet==3.2.4
+groq==0.33.0
 grpcio==1.75.0
 h11==0.16.0
 hf-xet==1.1.10
@@ -51,11 +52,17 @@ jsonpointer==3.0.0
 jsonschema==4.25.1
 jsonschema-specifications==2025.9.1
 kubernetes==33.1.0
-langchain==0.3.27
-langchain-community==0.3.29
-langchain-core==0.3.76
-langchain-text-splitters==0.3.11
-langsmith==0.4.28
+langchain==1.0.5
+langchain-classic==1.0.0
+langchain-community==0.4.1
+langchain-core==1.0.4
+langchain-groq==1.0.0
+langchain-text-splitters==1.0.0
+langgraph==1.0.3
+langgraph-checkpoint==3.0.1
+langgraph-prebuilt==1.0.2
+langgraph-sdk==0.2.9
+langsmith==0.4.42
 lxml==6.0.1
 markdown-it-py==4.0.0
 marshmallow==3.26.1
@@ -75,6 +82,7 @@ opentelemetry-proto==1.37.0
 opentelemetry-sdk==1.37.0
 opentelemetry-semantic-conventions==0.58b0
 orjson==3.11.3
+ormsgpack==1.12.0
 overrides==7.7.0
 packaging==25.0
 pandas==2.3.2
@@ -137,6 +145,7 @@ websocket-client==1.8.0
 websockets==15.0.1
 xlrd==1.2.0
 xlsxwriter==3.2.9
+xxhash==3.6.0
 yarl==1.20.1
 zipp==3.23.0
 zstandard==0.25.0
