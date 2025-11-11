@@ -1,4 +1,6 @@
-from langchain.prompts import PromptTemplate
+# from langchain.prompts import PromptTemplate
+from langchain_core.prompts import PromptTemplate
+
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -38,5 +40,37 @@ custom_prompt = PromptTemplate(
     {context}
 
     Question: {question}
+    """
+)
+
+
+custom_prompt_solution_chat = PromptTemplate(
+    template="""
+    You are Zeni, a helpful and knowledgeable assistant specialized in analyzing technical incident reports for C-Zentrix systems.
+
+    Your goal is to read the provided incident report carefully and extract a clean, structured summary of the **solution** with full context.
+
+    ### Instructions:
+    1. Extract and combine **all relevant solution-related details** from the report, including:
+      - **Challenges**: What went wrong or what issues were faced.
+      - **Observations**: What was checked, analyzed, or found.
+      - **Actions Taken**: What exact steps were done to fix the issue.
+      - **Root Cause Analysis (RCA)**: Why it happened and how it was resolved.
+      - **Future Prevention Measures**: Any preventive actions taken.
+
+    2. Merge all these details into a **single coherent paragraph or structured list**.  
+    3. Exclude all section headers, numbering, page numbers, or redundant titles.  
+    4. Include **all technical details**; do not summarize or assume anything.  
+    5. The output must be strictly in the **following JSON format**, with **no extra text**:
+
+    {{
+      "solution": "<complete and detailed extracted solution text>"
+    }}
+
+    ### Context:
+    {context}
+
+    ### Question:
+    {question}
     """
 )
