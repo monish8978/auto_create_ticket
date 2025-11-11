@@ -3,50 +3,67 @@ from logging.handlers import TimedRotatingFileHandler
 import os
 from settings import LOG_DIR, LOG_FILENAME
 
-# Ensure log directory exists (create if not present)
+# ------------------------------
+# Ensure log directory exists
+# ------------------------------
+# - If LOG_DIR does not exist, create it.
+# - Ensures that the log files can be written without errors.
 os.makedirs(LOG_DIR, exist_ok=True)
 
-# Full log file path (e.g., /var/log/czentrix/auto_create_ticket.log)
+# Full log file path
+# Example: /var/log/czentrix/auto_create_ticket.log
 LOG_FILE = os.path.join(LOG_DIR, LOG_FILENAME)
 
-# Create main logger instance for the app
+# ------------------------------
+# Create main logger
+# ------------------------------
+# - Name the logger "auto_create_ticket" to distinguish logs if multiple loggers exist.
+# - Set default logging level to INFO (will capture INFO, WARNING, ERROR, CRITICAL).
 log = logging.getLogger("auto_create_ticket")
-log.setLevel(logging.INFO)  # Default logging level (INFO and above)
+log.setLevel(logging.INFO)
 
+# ------------------------------
 # Define log format
-# Example output: 2025-09-18 13:20:15,123 - auto_create_ticket - INFO - 42 - Starting app...
+# ------------------------------
+# Format: timestamp - logger name - level - line number - message
+# Example: 2025-09-18 13:20:15,123 - auto_create_ticket - INFO - 42 - Starting app...
 formatter = logging.Formatter(
     '%(asctime)s - %(name)s - %(levelname)s - %(lineno)d - %(message)s'
 )
 
 # ------------------------------
-# File Handler (rotating logs)
+# File Handler (Rotating Logs)
 # ------------------------------
-# - Creates daily log file (rotates at midnight)
-# - Keeps 7 days backup logs
-# - Stores logs in LOG_FILE path
+# - Writes logs to a file.
+# - Rotates daily at midnight.
+# - Keeps 7 backup files (old logs are kept for 7 days).
+# - Encoding set to UTF-8 to support all characters.
 file_handler = TimedRotatingFileHandler(
     LOG_FILE, when="midnight", interval=1, backupCount=7, encoding="utf-8"
 )
-file_handler.setFormatter(formatter)  # Apply formatter
-file_handler.setLevel(logging.INFO)   # Log only INFO and above
+file_handler.setFormatter(formatter)  # Apply formatter to file logs
+file_handler.setLevel(logging.INFO)   # Only log INFO and above to file
 
 # ------------------------------
 # Console Handler (stdout logs)
 # ------------------------------
-# - Prints logs to console (useful for dev / debugging)
+# - Prints logs to the console.
+# - Useful during development or debugging to see logs in real time.
 console_handler = logging.StreamHandler()
-console_handler.setFormatter(formatter)  # Apply formatter
-console_handler.setLevel(logging.INFO)   # Log only INFO and above
+console_handler.setFormatter(formatter)  # Apply formatter to console logs
+console_handler.setLevel(logging.INFO)   # Only log INFO and above to console
 
 # ------------------------------
-# Attach Handlers
+# Attach handlers to the logger
 # ------------------------------
-# Prevents duplicate log entries if logger is imported multiple times
+# - Prevent duplicate logs if this module is imported multiple times.
 if not log.handlers:
     log.addHandler(file_handler)
     log.addHandler(console_handler)
 
-# Now, you can log messages like:
+# ------------------------------
+# Usage Examples
+# ------------------------------
 # log.info("App started successfully")
-# log.error("Something went wrong", exc_info=True)
+# log.warning("This is a warning")
+# log.error("An error occurred", exc_info=True)
