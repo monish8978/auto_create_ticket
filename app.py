@@ -1,36 +1,42 @@
 import os, traceback, requests, re, json
 from fastapi import FastAPI, UploadFile, File, HTTPException, Request, Form
 from fastapi.responses import JSONResponse
-from prompt_template import custom_prompt
-from langchain.memory.chat_message_histories import RedisChatMessageHistory
-from langchain.schema import HumanMessage, AIMessage
+from prompt_template import custom_prompt, custom_prompt_solution_chat
+from langchain_community.chat_message_histories import RedisChatMessageHistory
+from langchain_groq import ChatGroq
+from langchain_core.messages import HumanMessage, AIMessage
 from fastapi.middleware.cors import CORSMiddleware
 from utils.pdf_utils import extract_file_text
 from utils.chroma_utils import (
     split_text, get_chroma_client, get_or_create_collection, add_chunks_to_chroma
 )
 from utils.retriever import retrieve_documents
-from settings import PORT,REDIS_URL, BITNET_URL, BITNET_MODEL_NAME
+from settings import PORT, REDIS_URL, BITNET_URL, BITNET_MODEL_NAME, GROQ_API_KEY, GROQ_MODEL
 from utils.logger import log
 import warnings
 
-# Suppress unwanted warnings (not always recommended in production)
+# Suppress unwanted warnings for cleaner logs (optional)
 warnings.filterwarnings('ignore')
 
+# ------------------------------
 # Initialize FastAPI app
+# ------------------------------
 app = FastAPI(title="PDF Vector Store API", version="1.0")
 
-# Enable CORS (Cross-Origin Resource Sharing) for API calls
+# ------------------------------
+# Enable CORS for API calls
+# ------------------------------
+# ⚠️ In production, restrict origins to trusted domains
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # ⚠️ In production, restrict to trusted domains
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # ==========================
-# API: Upload PDF / String
+# API: Upload PDF or Raw Text
 # ==========================
 @app.post("/upload-pdf")
 async def upload_pdf(
@@ -39,20 +45,29 @@ async def upload_pdf(
     collection_name: str = Form(...)
 ):
     """
-    Upload a file or raw text, extract content, split into chunks,
-    and store in ChromaDB for later retrieval.
+    Upload a file (PDF, DOCX, TXT, etc.) or raw string,
+    extract text content, split it into chunks, and store in ChromaDB.
+
+    Args:
+        file: Uploaded file.
+        file_str: Optional raw text input.
+        collection_name: Name of ChromaDB collection to store data.
+
+    Returns:
+        JSON with status, number of chunks processed, and total tokens.
     """
     try:
-        # 1️⃣ Decide source: File upload or raw string
+        # ------------------------------
+        # Step 1: Extract text
+        # ------------------------------
         if file:
+            # Save uploaded file temporarily
             file_path = f"temp_{file.filename}"
             with open(file_path, "wb") as f:
                 f.write(await file.read())
-
-            # Extract text
+            # Extract text using utility function
             text = extract_file_text(file_path)
-            os.remove(file_path)
-
+            os.remove(file_path)  # Clean up temp file
         elif file_str:
             text = file_str
         else:
@@ -63,16 +78,21 @@ async def upload_pdf(
             log.error("No text extracted from file or string.")
             raise ValueError("No text content extracted or provided")
 
-        # 2️⃣ Split text into chunks
+        # ------------------------------
+        # Step 2: Split text into chunks
+        # ------------------------------
+        # Helps with embedding and retrieval in ChromaDB
         chunks = split_text(text)
 
-        # 3️⃣ Store chunks in ChromaDB
+        # ------------------------------
+        # Step 3: Store chunks in ChromaDB
+        # ------------------------------
         client = get_chroma_client()
         collection = get_or_create_collection(client, collection_name)
         await add_chunks_to_chroma(chunks, collection)
 
         return JSONResponse({
-            "detail": f" Text processed successfully for collection '{collection_name}'",
+            "detail": f"Text processed successfully for collection '{collection_name}'",
             "chunks_processed": len(chunks),
             "total_tokens": sum(len(chunk.page_content) for chunk in chunks)
         }, status_code=200)
@@ -83,32 +103,34 @@ async def upload_pdf(
         raise HTTPException(status_code=500, detail=f"Failed to process input: {str(e)}")
 
 
+# ==========================
+# Helper: Extract Relevant Data
+# ==========================
 def extract_relevant_data(input_text):
-    # First define the pattern to match everything between "---"
-    pattern1 = r'---\s*(.*?)\s*---'
+    """
+    Extract relevant section from input text based on patterns.
 
-    # Try to find matches for the first pattern
+    1. Look for text between "---" markers.
+    2. Fallback: Look for text starting with "Main Issue:".
+    """
+    pattern1 = r'---\s*(.*?)\s*---'
     matches = re.findall(pattern1, input_text, re.DOTALL)
 
-    # If no matches found, then try for the second pattern (starting from "Main Issue:")
     if not matches:
         pattern2 = r'Main Issue:.*?---'
         matches = re.findall(pattern2, input_text, re.DOTALL)
 
-    # If a match is found, return the first one
-    if matches:
-        return matches[0].strip()  # Use strip to clean up any leading/trailing whitespace
-    else:
-        return None  # If no match is found, return None
+    return matches[0].strip() if matches else None
+
 
 # ==========================
-# API: Query Documents
+# API: Query Documents & Generate AI Response
 # ==========================
 @app.post("/query")
 async def query_documents(request: Request):
     """
-    Query ChromaDB with user input and return AI-generated response
-    using Hugging Face inference API.
+    Accepts user query, retrieves context from ChromaDB, and generates AI response
+    via Hugging Face / Ollama API.
     """
     try:
         body = await request.json()
@@ -117,99 +139,65 @@ async def query_documents(request: Request):
         session_id = body.get("session_id")
         collection_name = body.get("collection_name")
 
-        # Ensure session_id is valid
         if not session_id:
             raise HTTPException(status_code=400, detail="Session ID is required")
 
-        # 1️⃣ Combine subject + mail body
+        # ------------------------------
+        # Step 1: Combine subject and mail body
+        # ------------------------------
         query_ask = subject + "\n" + mailBody
 
-        # 2️⃣ Retrieve past conversation from Redis
+        # ------------------------------
+        # Step 2: Retrieve conversation history from Redis
+        # ------------------------------
         chat_history = RedisChatMessageHistory(session_id=session_id, url=REDIS_URL)
         past_dialogue = [msg.content for msg in chat_history.messages if isinstance(msg, HumanMessage)][-3:]
         full_query = " ".join(past_dialogue + [query_ask])
 
-        # 3️⃣ ChromaDB retrieval
+        # ------------------------------
+        # Step 3: Retrieve top-k documents from ChromaDB
+        # ------------------------------
         client = get_chroma_client()
         collection = get_or_create_collection(client, collection_name)
         results = await retrieve_documents(full_query, collection, top_k=3)
         context_tmp = "\n\n".join(results)
-        context = extract_relevant_data(context_tmp)
+        context = extract_relevant_data(context_tmp) or context_tmp
 
-        if context == None:
-            context = context_tmp
-
-        # 4️⃣ Prepare system prompt
+        # ------------------------------
+        # Step 4: Prepare system prompt
+        # ------------------------------
         system_prompt = custom_prompt.format(context=context, question=query_ask)
 
-        # Keep short history for better performance
-        history_messages = chat_history.messages[-5:]
-        history_messages.append(HumanMessage(content=query_ask))
-        history_messages.insert(0, AIMessage(content=system_prompt))
-
-        # 5️⃣ Format messages for HF Inference API
-        formatted_messages = []
-        for msg in history_messages:
-            role = "user" if isinstance(msg, HumanMessage) else "assistant"
-            formatted_messages.append({"role": role, "content": msg.content})
-
-        headers = {"Content-Type": "application/json"}
+        # ------------------------------
+        # Step 5: Prepare payload for AI API
+        # ------------------------------
         payload = {
             "model": BITNET_MODEL_NAME,
             "messages": [{"role": "user", "content": system_prompt}],
             "stream": False,
             "think": False
         }
+        headers = {"Content-Type": "application/json"}
 
-        # Send request to Ollama API
-        response_api = requests.post(
-            BITNET_URL,
-            headers=headers,
-            data=json.dumps(payload)
-        )
-
+        response_api = requests.post(BITNET_URL, headers=headers, data=json.dumps(payload))
         response_api.raise_for_status()
         response_data = response_api.json()
 
+        # ------------------------------
+        # Step 6: Clean and format response
+        # ------------------------------
         response_text_tmp = response_data.get("message", {}).get("content", "").strip()
-        response_text_cleaned = re.sub(r'[\x00-\x1F\x7F]', '', response_text_tmp)  # Remove control characters
+        response_text_cleaned = re.sub(r'[\x00-\x1F\x7F]', '', response_text_tmp)
         response_text = json.loads(response_text_cleaned)
         response_text['solution'] = response_text['solution'].replace('\n', '\\n')
 
-        # Step 1: Get the raw solution text
-        response_text_tmp = response_text.get("solution", "").strip()
-
-        # Step 2: Remove control characters (non-printable characters like \x00-\x1F, \x7F)
-        response_text_cleaned = re.sub(r'[\x00-\x1F\x7F]', '', response_text_tmp)
-
-        # Step 3: Escape only the double quotes inside the solution field (escape quotes for JSON compatibility)
-        response_text_cleaned = response_text_cleaned.replace('"', '\\"')
-
-        # Step 4: Remove excessive backslashes by replacing \\ with just \
-        response_text_cleaned = response_text_cleaned.replace('\\\\', '\\')
-
-        # Step 5: Escape newlines (\n) with \\n for proper JSON formatting
-        response_text_cleaned = response_text_cleaned.replace('\n', '\\n')
-
-        # Step 6: Remove extra spaces (collapse multiple spaces into one)
-        response_text_cleaned = re.sub(r'\s+', ' ', response_text_cleaned).strip()
-
-        # Step 7: Dynamically construct the response_text dictionary
-        response_text = {
-            'solution': response_text_cleaned,
-            'Disposition': response_text.get('Disposition', ''),  # Dynamic value from input
-            'Sub Disposition': response_text.get('Sub Disposition', ''),  # Dynamic value from input
-            'Priority': response_text.get('Priority', '')  # Dynamic value from input
-        }
-
-        # Step 3: Escape double quotes inside the solution field
-        log.info(f"{response_text}")
-
-        # 7️⃣ Save conversation back to Redis
+        # Save conversation back to Redis
         chat_history.add_user_message(query_ask)
         chat_history.add_ai_message(response_text_tmp)
 
-        # 8️⃣ Build Adaptive Card style response
+        # ------------------------------
+        # Step 7: Build Adaptive Card style response
+        # ------------------------------
         response = {
             "type": "adaptiveCard",
             "body": [
@@ -236,11 +224,70 @@ async def query_documents(request: Request):
         raise HTTPException(status_code=500, detail=f"Failed to retrieve documents: {str(e)}")
 
 
-# # ==========================
-# # Run the App
-# # ==========================
-# if __name__ == "__main__":
-#     import uvicorn
-#     uvicorn.run(app, host="0.0.0.0", port=PORT)
+# ==========================
+# API: Solution Chat (Groq LLM)
+# ==========================
+@app.post("/solution-chat")
+async def solution_chat(request: Request):
+    """
+    Query ChromaDB and return AI response using Groq LLM.
+    """
+    try:
+        body = await request.json()
+        query_ask = body.get("user_query")
+        session_id = body.get("session_id")
+        collection_name = "auto_ticket_creation"
+
+        if not session_id:
+            raise HTTPException(status_code=400, detail="Session ID is required")
+
+        # Retrieve last 3 user messages from Redis
+        chat_history = RedisChatMessageHistory(session_id=session_id, url=REDIS_URL)
+        past_dialogue = [
+            msg.content for msg in chat_history.messages if isinstance(msg, HumanMessage)
+        ][-3:]
+        full_query = " ".join(past_dialogue + [query_ask])
+
+        # Retrieve top 3 documents from Chroma
+        client = get_chroma_client()
+        collection = get_or_create_collection(client, collection_name)
+        results = await retrieve_documents(full_query, collection, top_k=3)
+        context_tmp = "\n\n".join(results)
+        context = extract_relevant_data(context_tmp) or context_tmp
+
+        # Prepare prompt for Groq
+        system_prompt = custom_prompt_solution_chat.format(context=context, question=query_ask)
+
+        # Initialize Groq LLM
+        groq_llm = ChatGroq(
+            model=GROQ_MODEL,
+            temperature=0,
+            max_tokens=500,
+            api_key=os.getenv("GROQ_API_KEY", GROQ_API_KEY)
+        )
+
+        # Query Groq
+        response = groq_llm.invoke([
+            {"role": "system", "content": "You are Zeni, a helpful assistant."},
+            {"role": "user", "content": system_prompt}
+        ])
+        response_payload = response.content.strip()
+
+        # Save conversation to Redis
+        chat_history.add_user_message(query_ask)
+        chat_history.add_ai_message(response_payload)
+
+        return JSONResponse(response_payload, status_code=200)
+
+    except Exception as e:
+        log.error(f"Error in /solution-chat: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve documents: {str(e)}")
 
 
+# ==========================
+# Run the App
+# ==========================
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=PORT)
