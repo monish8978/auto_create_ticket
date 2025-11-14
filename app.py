@@ -14,6 +14,7 @@ from utils.retriever import retrieve_documents
 from settings import PORT, REDIS_URL, BITNET_URL, BITNET_MODEL_NAME, GROQ_API_KEY, GROQ_MODEL
 from utils.logger import log
 import warnings
+import json
 
 # Suppress unwanted warnings for cleaner logs (optional)
 warnings.filterwarnings('ignore')
@@ -227,6 +228,7 @@ async def query_documents(request: Request):
 # ==========================
 # API: Solution Chat (Groq LLM)
 # ==========================
+
 @app.post("/solution-chat")
 async def solution_chat(request: Request):
     """
@@ -246,17 +248,22 @@ async def solution_chat(request: Request):
         past_dialogue = [
             msg.content for msg in chat_history.messages if isinstance(msg, HumanMessage)
         ][-3:]
+
         full_query = " ".join(past_dialogue + [query_ask])
 
         # Retrieve top 3 documents from Chroma
         client = get_chroma_client()
         collection = get_or_create_collection(client, collection_name)
         results = await retrieve_documents(full_query, collection, top_k=3)
+
         context_tmp = "\n\n".join(results)
         context = extract_relevant_data(context_tmp) or context_tmp
 
-        # Prepare prompt for Groq
-        system_prompt = custom_prompt_solution_chat.format(context=context, question=query_ask)
+        # Prepare prompt
+        system_prompt = custom_prompt_solution_chat.format(
+            context=context, 
+            question=query_ask
+        )
 
         # Initialize Groq LLM
         groq_llm = ChatGroq(
@@ -271,19 +278,35 @@ async def solution_chat(request: Request):
             {"role": "system", "content": "You are Zeni, a helpful assistant."},
             {"role": "user", "content": system_prompt}
         ])
+
         response_payload = response.content.strip()
 
         # Save conversation to Redis
         chat_history.add_user_message(query_ask)
         chat_history.add_ai_message(response_payload)
 
-        return JSONResponse(response_payload, status_code=200)
+        # Convert model response to Python dict (JSON)
+        try:
+            groq_parsed = json.loads(response_payload)
+        except:
+            groq_parsed = response_payload
+
+        # Build final response dictionary
+        final_response = {
+            "source": "rag_knowledge_base",
+            "query": query_ask,
+            "solution": groq_parsed.get("solution", response_payload),
+            "session_id": session_id,
+            "document": collection_name
+        }
+
+        return JSONResponse(final_response, status_code=200)
 
     except Exception as e:
-        log.error(f"Error in /solution-chat: {e}")
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Failed to retrieve documents: {str(e)}")
-
+        return JSONResponse(
+            {"status": "error", "message": str(e)},
+            status_code=500
+        )
 
 # ==========================
 # Run the App
